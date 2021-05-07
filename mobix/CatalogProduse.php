@@ -2,35 +2,53 @@
 
 namespace App\Http\Livewire;
 
+use Illuminate\Support\Str;
 use Maatwebsite\Excel\Facades\Excel;
 use App\Exports\ExportProduse;
+use App\Imports\ImportProduse;
+use Livewire\WithFileUploads;
 use Livewire\WithPagination;
 use Livewire\Component;
 use App\Produse;
 
 class CatalogProduse extends Component
 {
-    use WithPagination;
+    use WithPagination, WithFileUploads;
 
-    public $selecteazaToataPagina = false;
-    public $arataFormularEditare = false;
-    public $arataModalStergere = false;
-    public Produse $editeazaProdus;
-    public $sortField = 'denumire';
-    public $sortDirection = 'asc';    public $selecteazaTot = false;
-    public $selectate= [];
-    public $search = '';
-    
+    public Produse $model;
+
+    public $importExcel;
+    public string $search = '';
+
+    public bool $selectAll = false;
+    public bool $selectPage = false;
+    public $selected= [];
+
+    public bool $showModal = false;
+    public bool $showEditModal = false;
+    public bool $showDeleteModal = false;
+
+    public string $sortField = 'denumire';
+    public string $sortDirection = 'asc';
+
     protected $queryString = [
-        'sortField', 
+        'sortField',
         'sortDirection',
     ];
 
-    protected $rules = [
-        'editeazaProdus.denumire' => 'required',
-    ];
+    function rules(): array
+    {
+        return [
+        'model.denumire' => [
+            'required',
+            'unique:produse,denumire,'
+        ],
+    ];}
 
-    public function mount() { $this->editeazaProdus = Produse::make(['created_at' => now()]); }
+    public function mount()
+    {
+        $this->model = Produse::make(['created_at' => now()]);
+    }
 
     /** Sortează Produse **/
 
@@ -47,77 +65,86 @@ class CatalogProduse extends Component
 
     /** Selectează Produse **/
 
-    public function selecteazaTot()
+    public function selectAll()
     {
-        $this->selecteazaTot = true;
+        $this->selectAll = true;
     }
 
-    public function selecteazaToataPagina()
+    public function selectPage()
     {
-        $this->selectate = $this->produse->pluck('id')->map(fn($id) => (string) $id);
+        $this->selected = $this->produse->pluck('id')->map(fn($id) => (string) $id);
     }
-
-    /** CRUD **/
 
      /* Operațiuni CRUD (Marian Pop - 28.04.2021)
      * --------------------------------------------------*
-     * Editează, Adaugă, Salvează, Șterge
+     * Editează, Adaugă, Salvează, Șterge                *
      * --------------------------------------------------*
      */
 
-    public function editeaza(Produse $produs)
+    public function edit(Produse $produs)
     {
-        if ($this->editeazaProdus->isNot($produs)) $this->editeazaProdus = $produs;
-        $this->arataFormularEditare = true;
+        if ($this->model->isNot($produs)) $this->model = $produs;
+        $this->resetValidation();
+        $this->showEditModal = true;
     }
 
-    public function adaugaProdus()
+    public function addProduct()
     {
-        if ($this->editeazaProdus->getKey()) $this->editeazaProdus = Produse::make(['created_at' => now()]);
-        $this->arataFormularEditare = true;
+        $this->resetValidation();
+        if ($this->model->getKey()) {
+            $this->model = Produse::make(['created_at' => now()]);
+        }
+        $this->showEditModal = true;
     }
 
-    public function salveazaProdusul()
+    public function saveProduct()
     {
         $this->validate();
-        $this->editeazaProdus->save();
-        $this->arataFormularEditare = false;
+        $this->model->slug = Str::slug($this->model->denumire);
+        $this->model->save();
+        $this->showEditModal = false;
     }
 
-    public function stergeProduseSelectate()
+    public function deleteSelected()
     {
-        $produse = Produse::whereKey($this->selectate);
+        $produse = Produse::whereKey($this->selected);
         $produse->delete();
-        $this->arataModalStergere = false;
-        $this->selectate = [];
+        $this->showDeleteModal = false;
+        $this->selected = [];
+        $this->model = Produse::make();
     }
 
-     /* Exportă în format .xlsx (Marian Pop - 28.04.2021)
-     * --------------------------------------------------*
-     * Exporta produsele selectate in format .xlsx (excel)
-     * In viitor posibil sa dorim sa exportam si in alte formate (.csv etc.)
-     * --------------------------------------------------*
+     /* Exportă și importă în format .xlsx (Marian Pop - 28.04.2021)
+     * ---------------------------------------------------------------------- *
+     * Exporta produsele selected in format .xlsx (excel)                    *
+     * In viitor posibil sa dorim sa exportam si in alte formate (.csv etc.)  *
+     * ---------------------------------------------------------------------- *
      */
 
-    public function exportExcelSelectate() 
+    public function exportExcelSelected()
     {
-       return (new ExportProduse($this->selectate))->download('mobix_produse.xlsx');
+       return (new ExportProduse($this->selected))->download('mobix_produse.xlsx');
     }
 
-    /* Database Query (Marian Pop - 28.04.2021)
+    public function importProduseExcel()
+    {
+        $importProduse = $this->importExcel->store('Import-Excel-Produse');
+        Excel::import(new ImportProduse, $importProduse);
+        $this->showModal = false;
+    }
+
+     /* Database Query (Marian Pop - 28.04.2021)
      * --------------------------------------------------*
-     * Interogare bază de date pentru a primi produsele
-     * disponibile, sortate și paginate.
+     * Interogare bază de date pentru a primi produsele  *
+     * disponibile, sortate și paginate.                 *
      * --------------------------------------------------*
      */
 
     public function getProduseQueryProperty()
     {
-
         return Produse::query()
             ->search('denumire', $this->search)
             ->orderBy($this->sortField, $this->sortDirection);
-
     }
 
     public function getProduseProperty()
@@ -129,30 +156,29 @@ class CatalogProduse extends Component
 
     public function render()
     {
-        if ($this->selecteazaTot) $this->selectate = $this->produse->pluck('id')->map(fn($id) => (string) $id);
+        if ($this->selectAll) $this->selected = $this->produse->pluck('id')->map(fn($id) => (string) $id);
 
         return view('livewire.catalog-produse', [
             'produse' => $this->produse,
         ]);
+    }
 
      /** Livewire Lifecycle Hook **/
 
-     public function updatedSelectate()
+     public function updatedSelected()
      {
-        $this->selecteazaTot = false;
-        $this->selecteazaToataPagina = false;
+        $this->selectAll = false;
+        $this->selectPage = false;
      }
 
-     public function updatedSelecteazaToataPagina($value)
+     public function updatedSelectPage($value)
      {
 
-         $this->selecteazaTot = false;
-        // $this->selectate = [];
-
+        $this->selectAll = false;
         if ($value) {
-            $this->selectate = $this->produse->pluck('id')->map(fn($id) => (string) $id);
+            $this->selected = $this->produse->pluck('id')->map(fn($id) => (string) $id);
         } else {
-            $this->selectate = [];
+            $this->selected = [];
         }
      }
 
